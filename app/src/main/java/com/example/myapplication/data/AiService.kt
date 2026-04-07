@@ -12,7 +12,24 @@ import kotlinx.coroutines.withContext
 @Serializable
 data class ChatMessage(
     val role: String,
-    val content: String
+    val content: List<ContentPart>
+) {
+    constructor(role: String, text: String) : this(
+        role,
+        listOf(ContentPart(type = "text", text = text))
+    )
+}
+
+@Serializable
+data class ContentPart(
+    val type: String,
+    val text: String? = null,
+    val image_url: ImageUrl? = null
+)
+
+@Serializable
+data class ImageUrl(
+    val url: String
 )
 
 @Serializable
@@ -31,7 +48,13 @@ data class ChatResponse(
 
 @Serializable
 data class Choice(
-    val message: ChatMessage
+    val message: ResponseMessage
+)
+
+@Serializable
+data class ResponseMessage(
+    val role: String,
+    val content: String
 )
 
 class AiService(private val getApiKey: suspend () -> String?) {
@@ -80,5 +103,27 @@ class AiService(private val getApiKey: suspend () -> String?) {
             Log.e("AiService", "Exception: ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    suspend fun analyzeImage(base64Image: String, mode: String = "Food"): Result<String> {
+        val prompt = when (mode) {
+            "Food" -> "Identify the fruits or vegetables in this image. For each item, provide its name and the average nutritional abundance (calories, vitamins, minerals) per 100g. Format the output cleanly."
+            "Document" -> "Analyze this medical document (prescription, lab report, or summary). Extract the key information like patient name, medications prescribed, test results, or doctor's advice. Summarize it clearly."
+            "ID/Insurance" -> "Scan this health insurance card or hospital ID. Extract the provider name, policy number, member ID, and any other relevant identification details."
+            "Symptom" -> "Analyze this image of a skin rash, injury, or symptom. Provide a general observation of what it looks like (without giving a formal medical diagnosis) and suggest if it's something that typically requires a doctor's visit. Advice on simple first aid if applicable."
+            "Barcode" -> "Identify any medication barcodes or labels in this image. Extract the drug name, dosage, and manufacturer if possible."
+            else -> "Identify and explain what is shown in this medical-related image."
+        }
+
+        val messages = listOf(
+            ChatMessage(
+                role = "user",
+                content = listOf(
+                    ContentPart(type = "text", text = prompt),
+                    ContentPart(type = "image_url", image_url = ImageUrl(url = "data:image/jpeg;base64,$base64Image"))
+                )
+            )
+        )
+        return getCompletion(messages)
     }
 }

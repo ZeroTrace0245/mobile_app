@@ -26,4 +26,29 @@ object MockData {
             )
         )
     }
+
+    fun getMockAppointments(): List<Appointment> {
+        val now = System.currentTimeMillis()
+        val oneHour = 3600000L
+        val oneDay = 86400000L
+        
+        return listOf(
+            Appointment(
+                id = 1,
+                title = "Cardiology Checkup",
+                doctorName = "Dr. Smith",
+                location = "MediPlus Center, Floor 3",
+                dateTime = now + (oneDay * 2) + (oneHour * 2), // 2 days from now
+                notes = "Bring previous test results"
+            ),
+            Appointment(
+                id = 2,
+                title = "Routine Eye Exam",
+                doctorName = "Dr. Lee",
+                location = "Vision Clinic, Suite 204",
+                dateTime = now + (oneDay * 5), // 5 days from now
+                notes = "Fast for 4 hours before"
+            )
+        )
+    }
 }
