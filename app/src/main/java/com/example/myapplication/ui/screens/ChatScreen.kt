@@ -34,6 +34,8 @@ fun ChatScreen(
 ) {
     val scope = rememberCoroutineScope()
     val token by settingsRepository.githubToken.collectAsState(initial = null)
+    val aiEnabled by settingsRepository.aiEnabled.collectAsState(initial = true)
+    
     var showTokenDialog by remember { mutableStateOf(false) }
     var userMessage by remember { mutableStateOf("") }
     val messages = remember { mutableStateListOf<ChatMessage>() }
@@ -59,61 +61,72 @@ fun ChatScreen(
         },
         modifier = modifier
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    AiWelcomeMessage()
-                }
-
-                items(messages) { message ->
-                    ChatBubble(message)
-                }
-
-                if (isTyping) {
-                    item {
-                        TypingIndicator()
-                    }
+        if (!aiEnabled) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("AI Features are disabled", fontWeight = FontWeight.Bold)
+                    Text("You can enable them in the Settings tab.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
             }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item {
+                        AiWelcomeMessage()
+                    }
 
-            ChatInputArea(
-                message = userMessage,
-                onMessageChange = { userMessage = it },
-                onSend = {
-                    if (token == null) {
-                        showTokenDialog = true
-                    } else if (userMessage.isNotBlank()) {
-                        val prompt = userMessage
-                        messages.add(ChatMessage("user", prompt))
-                        userMessage = ""
-                        isTyping = true
-                        
-                        scope.launch {
-                            val context = messages.toList() // Send current history
-                            aiService.getCompletion(context).fold(
-                                onSuccess = { response ->
-                                    messages.add(ChatMessage("assistant", response))
-                                },
-                                onFailure = { error ->
-                                    messages.add(ChatMessage("assistant", "Error: ${error.message}"))
-                                }
-                            )
-                            isTyping = false
+                    items(messages) { message ->
+                        ChatBubble(message)
+                    }
+
+                    if (isTyping) {
+                        item {
+                            TypingIndicator()
                         }
                     }
                 }
-            )
+
+                ChatInputArea(
+                    message = userMessage,
+                    onMessageChange = { userMessage = it },
+                    onSend = {
+                        if (token == null) {
+                            showTokenDialog = true
+                        } else if (userMessage.isNotBlank()) {
+                            val prompt = userMessage
+                            messages.add(ChatMessage("user", prompt))
+                            userMessage = ""
+                            isTyping = true
+                            
+                            scope.launch {
+                                val context = messages.toList()
+                                aiService.getCompletion(context).fold(
+                                    onSuccess = { response ->
+                                        messages.add(ChatMessage("assistant", response))
+                                    },
+                                    onFailure = { error ->
+                                        messages.add(ChatMessage("assistant", "Error: ${error.message}"))
+                                    }
+                                )
+                                isTyping = false
+                            }
+                        }
+                    }
+                )
+            }
         }
 
         if (showTokenDialog) {
@@ -148,8 +161,11 @@ fun ChatBubble(message: ChatMessage) {
             colors = CardDefaults.cardColors(containerColor = containerColor),
             modifier = Modifier.widthIn(max = 300.dp)
         ) {
+            val textContent = message.content.filter { it.type == "text" }
+                .joinToString("\n") { it.text ?: "" }
+            
             MarkdownText(
-                text = message.content,
+                text = textContent,
                 color = textColor,
                 modifier = Modifier.padding(12.dp)
             )
@@ -159,10 +175,6 @@ fun ChatBubble(message: ChatMessage) {
 
 @Composable
 fun MarkdownText(text: String, color: Color, modifier: Modifier = Modifier) {
-    // Simple markdown support for bolding and italics
-    // Since I can't add full libraries easily, I'll do basic processing
-    // or just display it as is if it's too complex.
-    // For now, let's keep it simple.
     Text(
         text = text,
         color = color,

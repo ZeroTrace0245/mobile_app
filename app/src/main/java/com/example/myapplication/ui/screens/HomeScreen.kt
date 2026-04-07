@@ -13,11 +13,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Emergency
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Nfc
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,16 +24,27 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.draw
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.data.AiService
+import com.example.myapplication.data.Appointment
 import com.example.myapplication.data.ChatMessage
 import com.example.myapplication.data.HealthRecord
+import com.example.myapplication.data.SettingsRepository
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.myapplication.ui.theme.primaryGradient
+import com.example.myapplication.util.ExportUtils
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun HomeScreen(
@@ -43,9 +52,15 @@ fun HomeScreen(
     userName: String = "User",
     userProfile: HealthRecord? = null,
     aiService: AiService? = null,
-    onExportToNfc: (HealthRecord) -> Unit = {}
+    onExportToNfc: (HealthRecord) -> Unit = {},
+    onLaunchCamera: () -> Unit = {},
+    onOpenAiChat: () -> Unit = {},
+    onOpenEmergency: () -> Unit = {},
+    upcomingAppointments: List<Appointment> = emptyList(),
+    settingsRepository: SettingsRepository? = null
 ) {
     var visible by remember { mutableStateOf(false) }
+    val aiEnabled by settingsRepository?.aiEnabled?.collectAsState(initial = true) ?: remember { mutableStateOf(true) }
     
     LaunchedEffect(Unit) {
         visible = true
@@ -69,14 +84,28 @@ fun HomeScreen(
                 WelcomeHeader(userName)
             }
 
-            if (aiService != null) {
+            if (aiService != null && aiEnabled) {
                 item {
                     DashboardAiBot(aiService)
                 }
             }
 
+            if (aiEnabled) {
+                item {
+                    AiFeaturesCard(
+                        onOpenChat = onOpenAiChat,
+                        onOpenScanner = onLaunchCamera
+                    )
+                }
+            }
+
             if (userProfile != null) {
                 item {
+                    val context = LocalContext.current
+                    val picture = remember { android.graphics.Picture() }
+                    val cardColorLong by settingsRepository?.cardColor?.collectAsState(initial = null) ?: remember { mutableStateOf(null) }
+                    val cardColor = cardColorLong?.let { Color(it) } ?: Color(0xFF1E3C72)
+
                     Column(modifier = Modifier.padding(horizontal = 4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -89,20 +118,54 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
-                            TextButton(onClick = { onExportToNfc(userProfile) }) {
-                                Icon(Icons.Default.Nfc, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Export to Card", fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { 
+                                    val bitmap = ExportUtils.pictureToBitmap(picture)
+                                    ExportUtils.shareCardAsImage(context, bitmap)
+                                }) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share Image", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                                IconButton(onClick = { ExportUtils.shareCardAsPdf(context, userProfile) }) {
+                                    Icon(Icons.Default.PictureAsPdf, contentDescription = "Share PDF", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                                TextButton(onClick = { onExportToNfc(userProfile) }) {
+                                    Icon(Icons.Default.Nfc, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("NFC", fontSize = 12.sp)
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        MedicalIDCard(userProfile)
+                        Box(modifier = Modifier.drawWithCache {
+                            val width = size.width.toInt()
+                            val height = size.height.toInt()
+                            onDrawWithContent {
+                                val pictureCanvas = androidx.compose.ui.graphics.Canvas(
+                                    picture.beginRecording(width, height)
+                                )
+                                draw(this, layoutDirection, pictureCanvas, size) {
+                                    this@onDrawWithContent.drawContent()
+                                }
+                                picture.endRecording()
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawPicture(picture)
+                                }
+                            }
+                        }) {
+                            MedicalIDCard(userProfile, backgroundColor = cardColor)
+                        }
                     }
                 }
             }
 
+            if (upcomingAppointments.isNotEmpty()) {
+                item {
+                    UpcomingAppointmentsSection(upcomingAppointments)
+                }
+            }
+
             item {
-                PulseEmergencyCard()
+                PulseEmergencyCard(onOpenEmergency)
             }
 
             item {
@@ -127,12 +190,86 @@ fun HomeScreen(
                     DailyInsightsRow()
                 }
             }
+
+            item {
+                WellnessProgressSection()
+            }
+
+            item {
+                QuickLogSection()
+            }
+
+            item {
+                UpcomingRemindersSection()
+            }
         }
     }
 }
 
 @Composable
-fun PulseEmergencyCard() {
+fun AiFeaturesCard(onOpenChat: () -> Unit, onOpenScanner: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(28.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.horizontalGradient(listOf(Color(0xFF00B0FF), Color(0xFF0081CB))))
+                .padding(24.dp)
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("MediPlus AI Hub", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+                
+                Text(
+                    "Smart diagnostics, document scanning, and wellness advice powered by GPT-4o.",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 20.dp)
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = onOpenChat,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("AI Chat", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Button(
+                        onClick = onOpenScanner,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Scanner", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PulseEmergencyCard(onClick: () -> Unit) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -149,7 +286,7 @@ fun PulseEmergencyCard() {
         description = "QR Code & Critical Info",
         icon = Icons.Filled.Emergency,
         brush = Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.error, Color(0xFFFF8A80))),
-        onClick = {},
+        onClick = onClick,
         modifier = Modifier.scale(scale)
     )
 }
@@ -301,7 +438,6 @@ fun HomeScreenPreview() {
 @Composable
 fun DashboardAiBot(aiService: AiService) {
     var tip by remember { mutableStateOf("Getting a quick wellness tip for you...") }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         val messages = listOf(ChatMessage("user", "Give me one short, unique wellness tip for today."))
@@ -353,6 +489,156 @@ fun DashboardAiBot(aiService: AiService) {
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun UpcomingAppointmentsSection(appointments: List<Appointment>) {
+    val nextAppointment = appointments.first()
+    val dateFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+    val dateStr = dateFormat.format(Date(nextAppointment.dateTime))
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.CalendarMonth,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Column(modifier = Modifier.padding(start = 16.dp)) {
+                Text(
+                    text = "Next Appointment",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = nextAppointment.title,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "$dateStr • ${nextAppointment.doctorName}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun WellnessProgressSection() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Filled.TrendingUp, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Weekly Progress", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            LinearProgressIndicator(
+                progress = { 0.7f },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+            )
+            Text(
+                text = "You've reached 70% of your weekly goals!",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun QuickLogSection() {
+    Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+        Text("Quick Actions", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickLogButton("Water", Icons.Default.WaterDrop, MaterialTheme.colorScheme.primaryContainer, Modifier.weight(1f))
+            QuickLogButton("Sleep", Icons.Default.AutoAwesome, MaterialTheme.colorScheme.secondaryContainer, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun QuickLogButton(label: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier.height(56.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(containerColor = color)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(label, fontSize = 14.sp)
+    }
+}
+
+@Composable
+fun UpcomingRemindersSection() {
+    Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+        Text("Upcoming Reminders", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ReminderItem("Vitamins", "08:00 AM", Icons.Default.Notifications)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ReminderItem("Eye Exam", "Tomorrow, 10:30 AM", Icons.Default.Notifications)
+            }
+        }
+    }
+}
+
+@Composable
+fun ReminderItem(title: String, time: String, icon: ImageVector) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(time, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
