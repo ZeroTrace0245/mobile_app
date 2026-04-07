@@ -21,10 +21,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 @Composable
-fun LoginScreen(onLoginComplete: (String) -> Unit) {
+fun LoginScreen(onLoginComplete: (String) -> Unit, onDebugLogin: () -> Unit = {}) {
     var username by remember { mutableStateOf("") }
     var isLoggingIn by remember { mutableStateOf(false) }
-    
+
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
@@ -58,7 +58,7 @@ fun LoginScreen(onLoginComplete: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     modifier = Modifier.padding(bottom = 32.dp)
                 )
-                
+
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
@@ -83,6 +83,12 @@ fun LoginScreen(onLoginComplete: (String) -> Unit) {
                     enabled = username.isNotBlank()
                 ) {
                     Text("Get Started", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                TextButton(onClick = onDebugLogin) {
+                    Text("DEBUG: Skip & Fill Mock Data", color = MaterialTheme.colorScheme.secondary)
                 }
             }
         } else {

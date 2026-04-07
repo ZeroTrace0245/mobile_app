@@ -16,6 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myapplication.data.AiService
+import com.example.myapplication.data.ChatMessage
 import com.example.myapplication.data.HealthRecord
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.myapplication.ui.theme.primaryGradient
@@ -37,7 +41,9 @@ import com.example.myapplication.ui.theme.primaryGradient
 fun HomeScreen(
     modifier: Modifier = Modifier, 
     userName: String = "User",
-    userProfile: HealthRecord? = null
+    userProfile: HealthRecord? = null,
+    aiService: AiService? = null,
+    onExportToNfc: (HealthRecord) -> Unit = {}
 ) {
     var visible by remember { mutableStateOf(false) }
     
@@ -63,16 +69,33 @@ fun HomeScreen(
                 WelcomeHeader(userName)
             }
 
+            if (aiService != null) {
+                item {
+                    DashboardAiBot(aiService)
+                }
+            }
+
             if (userProfile != null) {
                 item {
                     Column(modifier = Modifier.padding(horizontal = 4.dp)) {
-                        Text(
-                            text = "Medical ID Card",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Medical ID Card",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            TextButton(onClick = { onExportToNfc(userProfile) }) {
+                                Icon(Icons.Default.Nfc, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Export to Card", fontSize = 12.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
                         MedicalIDCard(userProfile)
                     }
                 }
@@ -272,5 +295,64 @@ fun InsightItem(emoji: String, label: String, modifier: Modifier = Modifier) {
 fun HomeScreenPreview() {
     MyApplicationTheme {
         HomeScreen(userName = "Jane")
+    }
+}
+
+@Composable
+fun DashboardAiBot(aiService: AiService) {
+    var tip by remember { mutableStateOf("Getting a quick wellness tip for you...") }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        val messages = listOf(ChatMessage("user", "Give me one short, unique wellness tip for today."))
+        aiService.getCompletion(messages).fold(
+            onSuccess = { tip = it },
+            onFailure = { tip = "AI is ready to help! Ask me anything in the Chat tab." }
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.tertiary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Column(modifier = Modifier.padding(start = 16.dp)) {
+                Text(
+                    text = "MediPlus AI Tip",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                Text(
+                    text = tip,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
     }
 }

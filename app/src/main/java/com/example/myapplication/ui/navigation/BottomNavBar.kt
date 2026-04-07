@@ -1,14 +1,8 @@
 package com.example.myapplication.ui.navigation
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MedicalServices
-import androidx.compose.material.icons.filled.Notes
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -26,8 +20,9 @@ fun BottomNavBar(
     val items = listOf(
         BottomNavItem("Home", Icons.Filled.Home, 0),
         BottomNavItem("Health", Icons.Filled.MedicalServices, 1),
-        BottomNavItem("Meditate", Icons.Filled.FavoriteBorder, 2),
-        BottomNavItem("Journal", Icons.Filled.Notes, 3)
+        BottomNavItem("AI Chat", Icons.Filled.AutoAwesome, 2),
+        BottomNavItem("Meditate", Icons.Filled.FavoriteBorder, 3),
+        BottomNavItem("Journal", Icons.Filled.Notes, 4)
     )
 
     NavigationBar {

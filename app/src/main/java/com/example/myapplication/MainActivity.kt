@@ -1,6 +1,12 @@
 package com.example.myapplication
 
+import android.app.PendingIntent
+import android.content.Intent
+import android.nfc.NdefMessage
+import android.nfc.NfcAdapter
+import android.nfc.Tag
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,20 +19,35 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.example.myapplication.data.AiService
 import com.example.myapplication.data.AppDatabase
 import com.example.myapplication.data.FirebaseSyncRepository
 import com.example.myapplication.data.HealthRecord
+import com.example.myapplication.data.MockData
+import com.example.myapplication.data.SettingsRepository
 import com.example.myapplication.ui.screens.*
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.myapplication.ui.navigation.BottomNavBar
+import com.example.myapplication.util.NfcHandler
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var nfcAdapter: NfcAdapter? = null
+    private var pendingNdefMessage = mutableStateOf<NdefMessage?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+        
         val database = AppDatabase.getInstance(applicationContext)
         val firebaseSync = FirebaseSyncRepository()
+        val settingsRepository = SettingsRepository(applicationContext)
+        val aiService = AiService { 
+            settingsRepository.githubToken.first()?.takeIf { it.isNotBlank() } 
+                ?: settingsRepository.getFallbackToken() 
+        }
         
         enableEdgeToEdge()
         setContent {
@@ -35,9 +56,17 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    var currentAppStep by remember { mutableStateOf("login") }
-                    var userName by remember { mutableStateOf<String?>(null) }
-                    var userProfile by remember { mutableStateOf<HealthRecord?>(null) }
+                    val bypassLogin = false // Set to true to skip all screens and use mock data
+                    
+                    var currentAppStep by remember { 
+                        mutableStateOf(if (bypassLogin) "main" else "login") 
+                    }
+                    var userName by remember { 
+                        mutableStateOf<String?>(if (bypassLogin) "John Doe" else null) 
+                    }
+                    var userProfile by remember { 
+                        mutableStateOf<HealthRecord?>(if (bypassLogin) MockData.getMockProfile() else null) 
+                    }
                     val scope = rememberCoroutineScope()
 
                     Crossfade(
@@ -47,10 +76,18 @@ class MainActivity : ComponentActivity() {
                     ) { step ->
                         when (step) {
                             "login" -> {
-                                LoginScreen(onLoginComplete = { name ->
-                                    userName = name
-                                    currentAppStep = "registration" // Forced registration for now to show features
-                                })
+                                LoginScreen(
+                                    onLoginComplete = { name ->
+                                        userName = name
+                                        currentAppStep = "registration"
+                                    },
+                                    onDebugLogin = {
+                                        val mock = MockData.getMockProfile()
+                                        userName = mock.personalInfo.name
+                                        userProfile = mock
+                                        currentAppStep = "main"
+                                    }
+                                )
                             }
                             "registration" -> {
                                 RegistrationScreen(
@@ -68,11 +105,64 @@ class MainActivity : ComponentActivity() {
                                 PoliciesScreen(onBack = { currentAppStep = "registration" })
                             }
                             "main" -> {
-                                HealthWellnessApp(database, firebaseSync, userName ?: "User", userProfile)
+                                HealthWellnessApp(
+                                    database = database, 
+                                    firebaseSync = firebaseSync, 
+                                    userName = userName ?: "User", 
+                                    userProfile = userProfile,
+                                    aiService = aiService,
+                                    settingsRepository = settingsRepository,
+                                    onWriteNfc = { record ->
+                                        if (nfcAdapter == null) {
+                                            Toast.makeText(this@MainActivity, "NFC not supported", Toast.LENGTH_SHORT).show()
+                                        } else if (!nfcAdapter!!.isEnabled) {
+                                            Toast.makeText(this@MainActivity, "Please enable NFC", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            pendingNdefMessage.value = NfcHandler.createNdefMessage(record)
+                                            Toast.makeText(this@MainActivity, "Hold your phone near an NFC tag", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val intent = Intent(this, javaClass).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_MUTABLE)
+        nfcAdapter?.enableForegroundDispatch(this, pendingIntent, null, null)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        nfcAdapter?.disableForegroundDispatch(this)
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (NfcAdapter.ACTION_TAG_DISCOVERED == intent.action ||
+            NfcAdapter.ACTION_NDEF_DISCOVERED == intent.action ||
+            NfcAdapter.ACTION_TECH_DISCOVERED == intent.action) {
+            
+            val tag = intent.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
+            val message = pendingNdefMessage.value
+            
+            if (tag != null && message != null) {
+                NfcHandler.writeTag(tag, message).fold(
+                    onSuccess = {
+                        Toast.makeText(this, "Successfully written to NFC tag!", Toast.LENGTH_SHORT).show()
+                        pendingNdefMessage.value = null
+                    },
+                    onFailure = {
+                        Toast.makeText(this, "Failed to write: ${it.message}", Toast.LENGTH_SHORT).show()
+                    }
+                )
             }
         }
     }
@@ -83,7 +173,10 @@ fun HealthWellnessApp(
     database: AppDatabase, 
     firebaseSync: FirebaseSyncRepository, 
     userName: String,
-    userProfile: HealthRecord?
+    userProfile: HealthRecord?,
+    aiService: AiService,
+    settingsRepository: SettingsRepository,
+    onWriteNfc: (HealthRecord) -> Unit
 ) {
     var currentScreen by remember { mutableIntStateOf(0) }
     var editingRecord by remember { mutableStateOf<HealthRecord?>(null) }
@@ -125,15 +218,22 @@ fun HealthWellnessApp(
                 0 -> HomeScreen(
                     modifier = Modifier.padding(innerPadding), 
                     userName = userName,
-                    userProfile = userProfile
+                    userProfile = userProfile,
+                    aiService = aiService,
+                    onExportToNfc = onWriteNfc
                 )
                 1 -> HealthRecordsScreen(
                     modifier = Modifier.padding(innerPadding),
                     onEditProfile = { editingRecord = it },
                     onCreateProfile = { editingRecord = HealthRecord() }
                 )
-                2 -> MeditationScreen(modifier = Modifier.padding(innerPadding))
-                3 -> JournalScreen(modifier = Modifier.padding(innerPadding))
+                2 -> ChatScreen(
+                    aiService = aiService,
+                    settingsRepository = settingsRepository,
+                    modifier = Modifier.padding(innerPadding)
+                )
+                3 -> MeditationScreen(modifier = Modifier.padding(innerPadding))
+                4 -> JournalScreen(modifier = Modifier.padding(innerPadding))
             }
         }
     }
