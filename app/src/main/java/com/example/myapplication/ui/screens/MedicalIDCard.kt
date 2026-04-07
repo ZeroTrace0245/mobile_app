@@ -21,10 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.example.myapplication.data.HealthRecord
 
 @Composable
-fun MedicalIDCard(
-    record: HealthRecord,
-    backgroundColor: Color = Color(0xFF1E3C72)
-) {
+fun MedicalIDCard(record: HealthRecord) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -35,7 +32,7 @@ fun MedicalIDCard(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.linearGradient(listOf(backgroundColor, backgroundColor.copy(alpha = 0.8f))))
+                .background(Brush.linearGradient(listOf(Color(0xFF1E3C72), Color(0xFF2A5298))))
                 .padding(20.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
