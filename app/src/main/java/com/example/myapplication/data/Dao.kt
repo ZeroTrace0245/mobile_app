@@ -67,21 +67,3 @@ interface WellnessMetricDao {
     @Delete
     suspend fun deleteMetric(metric: WellnessMetric)
 }
-
-@Dao
-interface AppointmentDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAppointment(appointment: Appointment)
-
-    @Query("SELECT * FROM appointments ORDER BY dateTime ASC")
-    fun getAllAppointments(): Flow<List<Appointment>>
-
-    @Query("SELECT * FROM appointments WHERE dateTime >= :now ORDER BY dateTime ASC")
-    fun getUpcomingAppointments(now: Long): Flow<List<Appointment>>
-
-    @Update
-    suspend fun updateAppointment(appointment: Appointment)
-
-    @Delete
-    suspend fun deleteAppointment(appointment: Appointment)
-}
