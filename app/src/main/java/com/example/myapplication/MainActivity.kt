@@ -10,21 +10,22 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.example.myapplication.data.AiService
-import com.example.myapplication.data.AppDatabase
-import com.example.myapplication.data.FirebaseSyncRepository
-import com.example.myapplication.data.HealthRecord
-import com.example.myapplication.data.MockData
-import com.example.myapplication.data.SettingsRepository
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
+import com.example.myapplication.data.*
 import com.example.myapplication.ui.screens.*
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.myapplication.ui.navigation.BottomNavBar
@@ -69,6 +70,15 @@ class MainActivity : ComponentActivity() {
                     }
                     val scope = rememberCoroutineScope()
 
+                    LaunchedEffect(bypassLogin) {
+                        if (bypassLogin) {
+                            val mockApps = MockData.getMockAppointments()
+                            mockApps.forEach { 
+                                database.appointmentDao().insertAppointment(it)
+                            }
+                        }
+                    }
+
                     Crossfade(
                         targetState = currentAppStep,
                         animationSpec = tween(durationMillis = 800),
@@ -105,24 +115,35 @@ class MainActivity : ComponentActivity() {
                                 PoliciesScreen(onBack = { currentAppStep = "registration" })
                             }
                             "main" -> {
-                                HealthWellnessApp(
-                                    database = database, 
-                                    firebaseSync = firebaseSync, 
-                                    userName = userName ?: "User", 
-                                    userProfile = userProfile,
-                                    aiService = aiService,
-                                    settingsRepository = settingsRepository,
-                                    onWriteNfc = { record ->
-                                        if (nfcAdapter == null) {
-                                            Toast.makeText(this@MainActivity, "NFC not supported", Toast.LENGTH_SHORT).show()
-                                        } else if (!nfcAdapter!!.isEnabled) {
-                                            Toast.makeText(this@MainActivity, "Please enable NFC", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            pendingNdefMessage.value = NfcHandler.createNdefMessage(record)
-                                            Toast.makeText(this@MainActivity, "Hold your phone near an NFC tag", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                )
+                                var showCameraScan by remember { mutableStateOf(false) }
+                                
+                                if (showCameraScan) {
+                                    CameraScanScreen(
+                                        aiService = aiService,
+                                        onBack = { showCameraScan = false }
+                                    )
+                                } else {
+                                    HealthWellnessApp(
+                                        database = database, 
+                                        firebaseSync = firebaseSync, 
+                                        userName = userName ?: "User", 
+                                        userProfile = userProfile,
+                                        aiService = aiService,
+                                        settingsRepository = settingsRepository,
+                                        onWriteNfc = { record ->
+                                            if (nfcAdapter == null) {
+                                                Toast.makeText(this@MainActivity, "NFC not supported", Toast.LENGTH_SHORT).show()
+                                            } else if (!nfcAdapter!!.isEnabled) {
+                                                Toast.makeText(this@MainActivity, "Please enable NFC", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                pendingNdefMessage.value = NfcHandler.createNdefMessage(record)
+                                                Toast.makeText(this@MainActivity, "Hold your phone near an NFC tag", Toast.LENGTH_LONG).show()
+                                            }
+                                        },
+                                        onLaunchCamera = { showCameraScan = true },
+                                        onProfileUpdated = { userProfile = it }
+                                    )
+                                }
                             }
                         }
                     }
@@ -176,64 +197,143 @@ fun HealthWellnessApp(
     userProfile: HealthRecord?,
     aiService: AiService,
     settingsRepository: SettingsRepository,
-    onWriteNfc: (HealthRecord) -> Unit
+    onWriteNfc: (HealthRecord) -> Unit,
+    onLaunchCamera: () -> Unit,
+    onProfileUpdated: (HealthRecord) -> Unit
 ) {
     var currentScreen by remember { mutableIntStateOf(0) }
     var editingRecord by remember { mutableStateOf<HealthRecord?>(null) }
+    var showChatOverlay by remember { mutableStateOf(false) }
+    var showEmergencyOverlay by remember { mutableStateOf(false) }
+    
     val scope = rememberCoroutineScope()
     
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            if (editingRecord == null) {
-                BottomNavBar(
-                    currentScreen = currentScreen,
-                    onScreenChange = { 
-                        currentScreen = it
-                        editingRecord = null
+    val appointments by database.appointmentDao().getUpcomingAppointments(System.currentTimeMillis()).collectAsState(initial = emptyList())
+    val alwaysShowNav by settingsRepository.alwaysShowNav.collectAsState(initial = true)
+    var isNavVisibleManually by remember { mutableStateOf(false) }
+    
+    val isNavVisible = alwaysShowNav || isNavVisibleManually
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(alwaysShowNav) {
+                if (!alwaysShowNav) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                        val isNearBottom = down.position.y > size.height * 0.8f
+                        var dragAmount = 0f
+                        do {
+                            val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                            event.changes.forEach { change ->
+                                if (change.id == down.id) {
+                                    val delta = change.position.y - change.previousPosition.y
+                                    dragAmount += delta
+
+                                    if (dragAmount < -40f && isNearBottom) {
+                                        isNavVisibleManually = true
+                                    } else if (dragAmount > 40f && isNavVisibleManually) {
+                                        isNavVisibleManually = false
+                                    }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
-                )
+                }
             }
-        }
-    ) { innerPadding ->
-        if (editingRecord != null) {
-            HealthProfileEditScreen(
-                initialRecord = editingRecord!!,
-                onSave = { record ->
-                    scope.launch {
-                        if (record.id == 0) {
-                            database.healthRecordDao().insertHealthRecord(record)
-                        } else {
-                            database.healthRecordDao().updateHealthRecord(record)
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.background,
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = isNavVisible && editingRecord == null && !showChatOverlay && !showEmergencyOverlay,
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                ) {
+                    BottomNavBar(
+                        currentScreen = currentScreen,
+                        onScreenChange = { 
+                            currentScreen = it
+                            editingRecord = null
+                            if (!alwaysShowNav) isNavVisibleManually = false
                         }
-                        firebaseSync.syncHealthRecord(record)
-                        editingRecord = null
+                    )
+                }
+            }
+        ) { innerPadding ->
+            if (editingRecord != null) {
+                HealthProfileEditScreen(
+                    initialRecord = editingRecord!!,
+                    onSave = { record ->
+                        scope.launch {
+                            if (record.id == 0) {
+                                database.healthRecordDao().insertHealthRecord(record)
+                            } else {
+                                database.healthRecordDao().updateHealthRecord(record)
+                            }
+                            firebaseSync.syncHealthRecord(record)
+                            onProfileUpdated(record)
+                            editingRecord = null
+                        }
+                    },
+                    onBack = { editingRecord = null }
+                )
+            } else if (showChatOverlay) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    ChatScreen(
+                        aiService = aiService,
+                        settingsRepository = settingsRepository,
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                    IconButton(
+                        onClick = { showChatOverlay = false },
+                        modifier = Modifier
+                            .padding(innerPadding)
+                            .padding(16.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Chat")
                     }
-                },
-                onBack = { editingRecord = null }
-            )
-        } else {
-            when (currentScreen) {
-                0 -> HomeScreen(
-                    modifier = Modifier.padding(innerPadding), 
-                    userName = userName,
-                    userProfile = userProfile,
-                    aiService = aiService,
-                    onExportToNfc = onWriteNfc
+                }
+            } else if (showEmergencyOverlay && userProfile != null) {
+                EmergencyDetailsScreen(
+                    record = userProfile,
+                    onEdit = { 
+                        editingRecord = userProfile
+                        showEmergencyOverlay = false 
+                    },
+                    onBack = { showEmergencyOverlay = false }
                 )
-                1 -> HealthRecordsScreen(
-                    modifier = Modifier.padding(innerPadding),
-                    onEditProfile = { editingRecord = it },
-                    onCreateProfile = { editingRecord = HealthRecord() }
-                )
-                2 -> ChatScreen(
-                    aiService = aiService,
-                    settingsRepository = settingsRepository,
-                    modifier = Modifier.padding(innerPadding)
-                )
-                3 -> MeditationScreen(modifier = Modifier.padding(innerPadding))
-                4 -> JournalScreen(modifier = Modifier.padding(innerPadding))
+            } else {
+                when (currentScreen) {
+                    0 -> HomeScreen(
+                        modifier = Modifier.padding(innerPadding), 
+                        userName = userName,
+                        userProfile = userProfile,
+                        aiService = aiService,
+                        onExportToNfc = onWriteNfc,
+                        onLaunchCamera = onLaunchCamera,
+                        onOpenAiChat = { showChatOverlay = true },
+                        onOpenEmergency = { showEmergencyOverlay = true },
+                        upcomingAppointments = appointments,
+                        settingsRepository = settingsRepository
+                    )
+                    1 -> CalendarScreen(
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                    2 -> HealthRecordsScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        onEditProfile = { editingRecord = it },
+                        onCreateProfile = { editingRecord = HealthRecord() }
+                    )
+                    3 -> MeditationScreen(modifier = Modifier.padding(innerPadding))
+                    4 -> JournalScreen(modifier = Modifier.padding(innerPadding))
+                    5 -> SettingsScreen(
+                        settingsRepository = settingsRepository,
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                }
             }
         }
     }
