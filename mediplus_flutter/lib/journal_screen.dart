@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'main.dart';
+import 'ai_service.dart';
+import 'database_helper.dart';
 
 class JournalEntry {
   final int id;
@@ -27,20 +30,34 @@ class JournalScreen extends StatefulWidget {
 }
 
 class _JournalScreenState extends State<JournalScreen> {
-  final List<JournalEntry> _entries = [];
+  final DatabaseHelper _db = DatabaseHelper();
+  List<JournalEntry> _entries = [];
   bool _showEditor = false;
 
-  void _addEntry(String title, String content, String mood) {
+  @override
+  void initState() {
+    super.initState();
+    _loadEntries();
+  }
+
+  Future<void> _loadEntries() async {
+    final entries = await _db.getJournalEntries();
     setState(() {
-      _entries.insert(0, JournalEntry(
-        id: _entries.length + 1,
-        title: title,
-        content: content,
-        mood: mood,
-        date: DateTime.now(),
-      ));
-      _showEditor = false;
+      _entries = entries;
     });
+  }
+
+  void _addEntry(String title, String content, String mood) async {
+    final entry = JournalEntry(
+      id: 0,
+      title: title,
+      content: content,
+      mood: mood,
+      date: DateTime.now(),
+    );
+    await _db.insertJournalEntry(entry);
+    _loadEntries();
+    setState(() => _showEditor = false);
   }
 
   @override
@@ -209,7 +226,87 @@ class _JournalEntryCard extends StatelessWidget {
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
           ),
+          if (settingsController.aiEnabled) ...[
+            const SizedBox(height: 16),
+            _AiAnalysisButton(content: entry.content),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _AiAnalysisButton extends StatefulWidget {
+  final String content;
+  const _AiAnalysisButton({required this.content});
+
+  @override
+  State<_AiAnalysisButton> createState() => _AiAnalysisButtonState();
+}
+
+class _AiAnalysisButtonState extends State<_AiAnalysisButton> {
+  bool _isLoading = false;
+  String? _analysis;
+
+  void _analyze() async {
+    setState(() => _isLoading = true);
+    try {
+      final aiService = AiService();
+      final response = await aiService.getCompletion([
+        ChatMessage.textOnly('system', 'You are a wellness assistant. Analyze the following journal entry and provide a brief (1-2 sentence) supportive insight or suggestion.'),
+        ChatMessage.textOnly('user', widget.content),
+      ]);
+      setState(() {
+        _analysis = response;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _analysis = "Could not analyze at this time.";
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_analysis != null) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF40C4FF).withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF40C4FF).withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.auto_awesome, color: Color(0xFF40C4FF), size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _analysis!,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
+        ),
+      ).animate().fadeIn();
+    }
+
+    return TextButton.icon(
+      onPressed: _isLoading ? null : _analyze,
+      icon: _isLoading
+          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF40C4FF)))
+          : const Icon(Icons.auto_awesome, size: 16, color: Color(0xFF40C4FF)),
+      label: Text(
+        _isLoading ? "Analyzing..." : "AI Analysis",
+        style: const TextStyle(color: Color(0xFF40C4FF), fontSize: 13, fontWeight: FontWeight.bold),
+      ),
+      style: TextButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }
